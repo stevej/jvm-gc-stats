@@ -69,7 +69,9 @@ class JvmGcStats
   end
 
 
-
+  # Inserts metrics with the name and value into the reporting system
+  # By default, this is ganglia via gmetric. This is the method to
+  # override if you want your own reporting.
   def report(name, value, units="items")
     key = "#{@prefix}jvm.gc.#{name}"
 
@@ -82,16 +84,17 @@ class JvmGcStats
     end
   end
 
+  # Returns a File object in read-mode for a given file. defaults to @filename
+  def open_file(file=@filename)
+    File.new(file, "r")
+  end
 
   TAIL_BLOCK_SIZE = 2048
   ALL_MEASUREMENTS = %w[promoFail.realSec major.concur.userSec major.concur.realSec major.block.userSec] +
                      %w[%s.survivalRatio %s.kbytesPerSec %s.userSec %s.realSec].collect{|m| %w[minor full].collect{|s| m % s}}.flatten
 
-  def open_file(file=@filename)
-    File.new(file, "r")
-  end
-
-
+  # Read a file, optionally just the tail of the file (based on the @tail variable)
+  # and for each logline, report it's stats.
   def tail(file=@filename)
     # There are 4 scenarios this code has to handle
     #  empty read
@@ -180,6 +183,7 @@ class JvmGcStats
     report("#{collection}.realSec", realSec)
   end
 
+  # Parses a GC logline and report the metrics it contains.
   def ingest(str)
     case str
     when MINOR
