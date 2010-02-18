@@ -75,7 +75,9 @@ class JvmGcStats
 
     if @report
       system("gmetric -t float -n \"#{key}\" -v \"#{value}\" -u \"#{units}\" -d #{@report_timeout}")
-    else
+    end
+
+    if @debug
       puts "#{key}=#{value} #{units}"
     end
   end
@@ -89,44 +91,53 @@ class JvmGcStats
     File.new(file, "r")
   end
 
+
   def tail(file=@filename)
+    # There are 4 scenarios this code has to handle
+    #  empty read
+    #  partial read (no full record)
+    #  full record (ending on a \n)
+    #  full record with partial record
     f = open_file(file)
     f.seek(0, IO::SEEK_END) if @tail
     current_inode = f.stat.ino
     lines = ""
+    readlines = 0
 
     loop do
-      begin
-        # Limit reads to prevent loading entire file into memory if not seeking to end
-        part = f.read_nonblock(TAIL_BLOCK_SIZE) rescue nil
+      # Limit reads to prevent loading entire file into memory if not seeking to end
+      part = f.read_nonblock(TAIL_BLOCK_SIZE) rescue nil
 
-        if part == nil
-          # End of file reached, wait for more data.
-          # Also report all the metrics as zero as a sentinel to your reporting system.
-          ALL_MEASUREMENTS.each{|m| report(m, 0)}
-          sleep @tail_sleep_secs
-
-          f = open(file) unless File.stat(file).ino == current_inode
-          current_inode = f.stat.ino
-        else
-          lines += part
-        end
-      end until lines.include?("\n")
-
-      # If there isn't a null trailing field, last string isn't newline terminated
-      split = lines.split("\n", TAIL_BLOCK_SIZE)
-
-      if split[-1] == ""
-        # Remove null trailing field
-        split.pop
-        lines = "" # reset lines
-      else
-        # Save partial line for next round
-        lines = split.pop
+      if part != nil
+        lines += part
+        readlines += 1
+      elsif part.nil?
+        f = open(file) unless File.stat(file).ino == current_inode
+        current_inode = f.stat.ino
+        # If no lines have been read through this loop, then
+        # report zeros as sentinels.
+        ALL_MEASUREMENTS.each { |m| report(m, 0) } if readlines == 0
       end
 
-      split.each do |line|
-        ingest(line)
+      if readlines == 0
+        sleep @tail_sleep_secs
+      elsif lines.include?("\n")
+        # If there isn't a null trailing field, last string isn't newline terminated
+        split = lines.split("\n", TAIL_BLOCK_SIZE)
+        if split[-1] == ""
+          # Remove null trailing field
+          split.pop
+          lines = "" # reset lines
+        else
+          # Save partial line for next round
+          lines = split.pop
+        end
+
+        readlines -= split.size # reset the number of read lines
+
+        split.each do |line|
+          ingest(line)
+        end
       end
     end
   end
